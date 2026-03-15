@@ -31,6 +31,7 @@ type Snapshot struct {
 	log                     *service.Logger
 	snapshotStatusMetric    *service.MetricGauge
 	snapshotRowsTotalMetric *service.MetricCounter
+	lobEnabled              bool
 }
 
 // NewSnapshot creates a new instance of Snapshot capable of snapshotting provided tables.
@@ -42,6 +43,7 @@ func NewSnapshot(ctx context.Context,
 	publisher ChangePublisher,
 	logger *service.Logger,
 	metrics *service.Metrics,
+	lobEnabled bool,
 ) (*Snapshot, error) {
 	db, err := sql.Open("oracle", connectionString)
 	if err != nil {
@@ -60,6 +62,7 @@ func NewSnapshot(ctx context.Context,
 		log:                     logger,
 		snapshotStatusMetric:    metrics.NewGauge("oracledb_cdc_snapshot_status", "table"),
 		snapshotRowsTotalMetric: metrics.NewCounter("oracledb_cdc_snapshot_rows_total", "table"),
+		lobEnabled:              lobEnabled,
 	}
 	return s, nil
 }
@@ -223,6 +226,9 @@ func (s *Snapshot) processBatch(ctx context.Context, tx *sql.Tx, table UserTable
 		for idx, value := range values {
 			if v, mapErr = mappers[idx](value); mapErr != nil {
 				return 0, mapErr
+			}
+			if !s.lobEnabled && isLOBType(types[idx].DatabaseTypeName()) {
+				v = nil
 			}
 			row[columns[idx]] = v
 			if _, ok := lastSeenPksValues[columns[idx]]; ok {
@@ -456,6 +462,14 @@ func buildColumnMeta(types []*sql.ColumnType) []ColumnMeta {
 		}
 	}
 	return meta
+}
+
+func isLOBType(dbType string) bool {
+	switch dbType {
+	case "CLOB", "NCLOB", "BLOB", "LONG", "LONG RAW":
+		return true
+	}
+	return false
 }
 
 func snapshotValueMapper[T any](v any) (any, error) {
