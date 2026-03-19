@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -28,7 +27,6 @@ import (
 	"time"
 
 	"github.com/Jeffail/shutdown"
-	"github.com/linkedin/goavro/v2"
 	franz_sr "github.com/twmb/franz-go/pkg/sr"
 	"github.com/xeipuuv/gojsonschema"
 
@@ -615,44 +613,9 @@ func (s *schemaRegistryEncoder) getOrCreateMetaEncoder(ctx context.Context, meta
 		schemaStr = avroJSON
 		schemaType = franz_sr.TypeAvro
 
-		var codec *goavro.Codec
-		if s.avroRawJSON {
-			codec, err = goavro.NewCodecForStandardJSONFull(avroJSON)
-		} else {
-			codec, err = goavro.NewCodec(avroJSON)
-		}
+		encoder, err = s.getMetaAvroEncoder(avroJSON, common)
 		if err != nil {
-			return nil, 0, fmt.Errorf("creating Avro codec: %w", err)
-		}
-		encoder = func(m *service.Message) error {
-			b, bErr := m.AsBytes()
-			if bErr != nil {
-				return bErr
-			}
-			// Convert ISO 8601 timestamp strings to epoch milliseconds
-			// before passing to goavro, which expects a numeric value for
-			// the Avro timestamp-millis logical type. CDC sources emit
-			// time.Time values that JSON-marshal to ISO 8601 strings.
-			var parsed map[string]any
-			if jErr := json.Unmarshal(b, &parsed); jErr != nil {
-				return fmt.Errorf("unmarshalling message for timestamp conversion: %w", jErr)
-			}
-			if cErr := convertTimestampFields(parsed, common); cErr != nil {
-				return fmt.Errorf("converting timestamp fields: %w", cErr)
-			}
-			if b, bErr = json.Marshal(parsed); bErr != nil {
-				return fmt.Errorf("re-marshalling message after timestamp conversion: %w", bErr)
-			}
-			native, _, nErr := codec.NativeFromTextual(b)
-			if nErr != nil {
-				return nErr
-			}
-			binary, binErr := codec.BinaryFromNative(nil, native)
-			if binErr != nil {
-				return binErr
-			}
-			m.SetBytes(binary)
-			return nil
+			return nil, 0, err
 		}
 
 	case "json_schema":

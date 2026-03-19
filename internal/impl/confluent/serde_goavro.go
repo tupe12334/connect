@@ -23,6 +23,7 @@ import (
 	franz_sr "github.com/twmb/franz-go/pkg/sr"
 
 	"github.com/redpanda-data/benthos/v4/public/bloblang"
+	"github.com/redpanda-data/benthos/v4/public/schema"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/redpanda-data/connect/v4/internal/impl/confluent/sr"
@@ -116,6 +117,36 @@ func (s *schemaRegistryEncoder) getAvroEncoder(ctx context.Context, schema franz
 			return err
 		}
 
+		m.SetBytes(binary)
+		return nil
+	}, nil
+}
+
+func (s *schemaRegistryEncoder) getMetaAvroEncoder(avroJSON string, common schema.Common) (schemaEncoder, error) {
+	var codec *goavro.Codec
+	var err error
+	if s.avroRawJSON {
+		codec, err = goavro.NewCodecForStandardJSONFull(avroJSON)
+	} else {
+		codec, err = goavro.NewCodec(avroJSON)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("creating Avro codec: %w", err)
+	}
+
+	return func(m *service.Message) error {
+		data, err := m.AsStructuredMut()
+		if err != nil {
+			return fmt.Errorf("extracting structured data: %w", err)
+		}
+		normalized, err := normalizeForAvro(data, common, s.avroRawJSON)
+		if err != nil {
+			return fmt.Errorf("normalizing data for Avro: %w", err)
+		}
+		binary, err := codec.BinaryFromNative(nil, normalized)
+		if err != nil {
+			return err
+		}
 		m.SetBytes(binary)
 		return nil
 	}, nil
